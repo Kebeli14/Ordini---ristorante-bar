@@ -1184,66 +1184,102 @@ class InterfacciaMobile(QMainWindow):
     # =========================================================================
 
     def mostra_prodotti_card(self, categoria: str, numero_tavolo: int, search: bool = False, termine_ricerca: str = ""):
+
+        # PULIZIA LAYOUT
         while self.layout_prodotti.count():
             child = self.layout_prodotti.takeAt(0)
-            if child.widget(): child.widget().deleteLater()
+            if child.widget():
+                child.widget().deleteLater()
 
-        ordine = self.gestione.get_ordine_attivo(numero_tavolo)
+        # PRENDO PRODOTTI
         if search and termine_ricerca:
             tutti = self.gestione.get_tutti_prodotti()
             prodotti = [p for p in tutti if termine_ricerca.lower() in p.nome.lower()]
         else:
             prodotti = self.gestione.get_categoria_prodotti(categoria)
 
-        self._mostra_grid_prodotti(prodotti, numero_tavolo, ordine)
-        self.layout_prodotti.addStretch()
+        # SCROLL
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: white; }")
 
-    def _mostra_grid_prodotti(self, prodotti: list, numero_tavolo: int, ordine):
-        tabella = QTableWidget()
-        tabella.setColumnCount(2)
-        tabella.setHorizontalHeaderLabels(["Prodotto", "Prezzo"])
-        tabella.horizontalHeader().setStretchLastSection(False)
-        tabella.setColumnWidth(0, 220)
-        tabella.setColumnWidth(1, 80)
-        tabella.setRowCount(len(prodotti))
-        tabella.setSelectionBehavior(QTableWidget.SelectRows)
-        tabella.setSelectionMode(QTableWidget.NoSelection)
-        tabella.setStyleSheet("QTableWidget { background-color: white; alternate-background-color: #f9f9f9; border: none; } QTableWidget::item { padding: 8px; border-bottom: 1px solid #ecf0f1; } QHeaderView::section { background-color: #34495e; color: white; padding: 8px; border: none; font-weight: bold; }")
+        container = QWidget()
+        container.setStyleSheet("background-color: white;")
+        grid = QGridLayout(container)
+        grid.setSpacing(10)
+        grid.setContentsMargins(10, 10, 10, 10)
+        grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
+        COLS = 3
         for i, prodotto in enumerate(prodotti):
-            quantita = sum(r.quantita for r in ordine.righe_ordinare if r.prodotto.id_prodotto == prodotto.id_prodotto) + \
-                       sum(r.quantita for r in ordine.righe_ordinato if r.prodotto.id_prodotto == prodotto.id_prodotto)
-            nome_text = f"{prodotto.nome} x{quantita}" if quantita > 0 else prodotto.nome
-            nome_item = QTableWidgetItem(nome_text)
-            nome_item.setForeground(QColor("#3498db" if quantita > 0 else "#2c3e50"))
-            nome_item.setFont(QFont("Arial", 11, QFont.Bold))
-            tabella.setItem(i, 0, nome_item)
+            row = i // COLS
+            col = i % COLS
 
-            prezzo_item = QTableWidgetItem(f"€{prodotto.prezzo:.2f}")
-            prezzo_item.setForeground(QColor("#2c3e50"))
-            prezzo_item.setFont(QFont("Arial", 11, QFont.Bold))
-            prezzo_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            tabella.setItem(i, 1, prezzo_item)
-            tabella.setRowHeight(i, 40)
+            # Contenitore card cliccabile
+            card_widget = QWidget()
+            card_widget.setFixedSize(150, 90)
+            card_widget.setStyleSheet("""
+                QWidget {
+                    background-color: #5dade2;
+                    border-radius: 10px;
+                    border: 1px solid #2e86c1;
+                }
+                QWidget:hover {
+                    background-color: #3498db;
+                    border: 1px solid #1a6fa8;
+                }
+            """)
 
-        def click_riga(item):
-            nome_cercato = item.text().split(' x')[0]
-            prod = next((p for p in prodotti if p.nome == nome_cercato), None)
-            if prod: self.card_cliccata(numero_tavolo, prod)
+            card_layout = QVBoxLayout(card_widget)
+            card_layout.setContentsMargins(10, 10, 10, 10)
+            card_layout.setSpacing(4)
+            card_layout.setAlignment(Qt.AlignTop)
 
-        tabella.itemClicked.connect(click_riga)
-        self.layout_prodotti.addWidget(tabella)
+            lbl_nome = QLabel(prodotto.nome)
+            lbl_nome.setWordWrap(True)
+            lbl_nome.setStyleSheet("color: white; font-size: 12px; font-weight: bold; background: transparent; border: none;")
+            lbl_nome.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            card_layout.addWidget(lbl_nome)
 
-    def card_cliccata(self, numero_tavolo: int, prodotto: Prodotto):
-        self.gestione.aggiungi_al_ordine(numero_tavolo, prodotto, 1)
-        self.mostra_tab_ordinare(numero_tavolo)
-        ordine = self.gestione.get_ordine_attivo(numero_tavolo)
-        self.label_totale.setText(f"€{ordine.get_totale():.2f}")
-        self.mostra_sezione_destra(None)
+            lbl_prezzo = QLabel(f"€ {prodotto.prezzo:.2f}")
+            lbl_prezzo.setStyleSheet("color: #d6eaf8; font-size: 13px; font-weight: bold; background: transparent; border: none;")
+            lbl_prezzo.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
+            card_layout.addStretch()
+            card_layout.addWidget(lbl_prezzo)
+
+            # Click su tutta la card
+            card_widget.mousePressEvent = lambda e, p=prodotto: self.card_cliccata(numero_tavolo, p)
+
+            grid.addWidget(card_widget, row, col, Qt.AlignTop | Qt.AlignLeft)
+
+        # Riempi colonne vuote nell'ultima riga per allineamento sinistra
+        total = len(prodotti)
+        remainder = total % COLS
+        if remainder != 0:
+            for fill_col in range(remainder, COLS):
+                spacer = QWidget()
+                spacer.setFixedSize(150, 90)
+                spacer.setStyleSheet("background: transparent; border: none;")
+                grid.addWidget(spacer, total // COLS, fill_col)
+
+        scroll.setWidget(container)
+        self.layout_prodotti.addWidget(scroll)
 
     def cambia_categoria(self, categoria: str, numero_tavolo: int):
         self.categoria_attuale = categoria
+        for cat, btn in self.pulsanti_categorie.items():
+            if cat == categoria:
+                btn.setStyleSheet("QPushButton { background-color: #e67e22; color: white; border: none; border-radius: 5px; padding: 5px; font-size: 9px; font-weight: bold; border-bottom: 3px solid #d35400; } QPushButton:hover { background-color: #d35400; }")
+            else:
+                btn.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border: none; border-radius: 5px; padding: 5px; font-size: 9px; font-weight: bold; } QPushButton:hover { background-color: #e67e22; }")
         self.mostra_prodotti_card(categoria, numero_tavolo)
+
+    def card_cliccata(self, numero_tavolo: int, prodotto: Prodotto):
+        self.gestione.aggiungi_al_ordine(numero_tavolo, prodotto, 1)
+        ordine = self.gestione.get_ordine_attivo(numero_tavolo)
+        if ordine:
+            self.label_totale.setText(f"€{ordine.get_totale():.2f}")
+        self.mostra_tab_ordinare(numero_tavolo)
 
     # =========================================================================
     # SEZIONE DESTRA (Nota / Ingredienti)
