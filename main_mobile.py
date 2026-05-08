@@ -448,46 +448,37 @@ class InterfacciaMobile(QMainWindow):
             tl.setContentsMargins(0, 0, 0, 0)
             tl.setSpacing(0)
 
+            # Colore in base allo stato
+            if tavolo.in_attesa:
+                colore = "#e74c3c"
+            elif tavolo.occupato:
+                colore = "#f39c12"
+            else:
+                colore = "#3498db"
+
             btn = QPushButton(f"Tavolo {tavolo.numero_tavolo}")
             btn.setMinimumHeight(100)
             btn.setFont(QFont("Arial", 14, QFont.Bold))
-
-            if tavolo.in_attesa:
-                btn.setStyleSheet("background-color: #e74c3c; color: white; border: none; border-radius: 8px 8px 0px 0px; padding: 12px;")
-            elif tavolo.occupato:
-                btn.setStyleSheet("background-color: #f39c12; color: white; border: none; border-radius: 8px 8px 0px 0px; padding: 12px;")
-            else:
-                btn.setStyleSheet("background-color: #3498db; color: white; border: none; border-radius: 8px 8px 0px 0px; padding: 12px;")
-
+            btn.setStyleSheet(f"background-color: {colore}; color: white; border: none; border-radius: 8px 8px 0px 0px; padding: 12px;")
             btn.clicked.connect(lambda checked, num=tavolo.numero_tavolo: self.clicca_tavolo(num))
             tl.addWidget(btn)
 
             info_widget = QWidget()
             info_layout = QHBoxLayout(info_widget)
-            info_layout.setContentsMargins(8, 5, 8, 5)
+            info_layout.setContentsMargins(8, 4, 8, 4)
             info_layout.setSpacing(0)
+            info_widget.setFixedHeight(28)
+            info_widget.setStyleSheet(f"background-color: {colore}; border-radius: 0px 0px 8px 8px; border-top: 1px solid rgba(0,0,0,0.10);")
 
-            if tavolo.in_attesa:
-                info_widget.setStyleSheet("background-color: #e74c3c; border-radius: 0px 0px 8px 8px;")
-                if tavolo.ordine_attivo:
-                    p = QLabel(str(tavolo.ordine_attivo.numero_persone))
-                    p.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
-                    info_layout.addWidget(p)
-                    info_layout.addStretch()
-                    pr = QLabel(f"€{tavolo.ordine_attivo.get_totale():.2f}")
-                    pr.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
-                    info_layout.addWidget(pr)
-            elif tavolo.occupato and tavolo.ordine_attivo:
-                info_widget.setStyleSheet("background-color: #f39c12; border-radius: 0px 0px 8px 8px;")
+            if (tavolo.in_attesa or tavolo.occupato) and tavolo.ordine_attivo:
                 p = QLabel(str(tavolo.ordine_attivo.numero_persone))
-                p.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
+                p.setStyleSheet("color: white; font-size: 13px; font-weight: bold; background: transparent; border: none;")
                 info_layout.addWidget(p)
                 info_layout.addStretch()
                 pr = QLabel(f"€{tavolo.ordine_attivo.get_totale():.2f}")
-                pr.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
+                pr.setStyleSheet("color: white; font-size: 13px; font-weight: bold; background: transparent; border: none;")
                 info_layout.addWidget(pr)
             else:
-                info_widget.setStyleSheet("background-color: #3498db; border-radius: 0px 0px 8px 8px;")
                 info_layout.addStretch()
 
             info_widget.setLayout(info_layout)
@@ -721,18 +712,18 @@ class InterfacciaMobile(QMainWindow):
         # categorie
         cat_scroll = QScrollArea()
         cat_scroll.setWidgetResizable(True)
-        cat_scroll.setMaximumWidth(90)
+        cat_scroll.setMaximumWidth(120)
         cat_scroll.setStyleSheet("QScrollArea { border: none; background-color: #ecf0f1; }")
         cat_widget = QWidget()
         cat_layout = QVBoxLayout(cat_widget)
         cat_layout.setContentsMargins(5, 5, 5, 5)
-        cat_layout.setSpacing(3)
+        cat_layout.setSpacing(5)
         self.pulsanti_categorie = {}
         for categoria in self.gestione.get_categorie():
             btn = QPushButton(categoria)
-            btn.setMinimumHeight(38)
-            btn.setMaximumHeight(38)
-            btn.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border: none; border-radius: 5px; padding: 5px; font-size: 9px; font-weight: bold; } QPushButton:hover { background-color: #e67e22; }")
+            btn.setMinimumHeight(52)
+            btn.setMaximumHeight(52)
+            btn.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border: none; border-radius: 8px; padding: 6px; font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #e67e22; }")
             btn.clicked.connect(lambda checked, cat=categoria, n=numero_tavolo: self.cambia_categoria(cat, n))
             cat_layout.addWidget(btn)
             self.pulsanti_categorie[categoria] = btn
@@ -894,11 +885,18 @@ class InterfacciaMobile(QMainWindow):
             btn_pagare.clicked.connect(lambda: self.paga_ordine(numero_tavolo))
             self.btn_layout_ordini.addWidget(btn_pagare)
         else:
-            btn_conf = QPushButton("✓ Conferma")
-            btn_conf.setMinimumHeight(45)
-            btn_conf.setStyleSheet("QPushButton { background-color: #27ae60; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #229954; }")
-            btn_conf.clicked.connect(lambda: self.conferma_ordine_final(numero_tavolo))
-            self.btn_layout_ordini.addWidget(btn_conf)
+            if numero_tavolo == 0:  # ASPORTO: vai diretto al pagamento
+                btn_conf = QPushButton("💳 Paga Asporto")
+                btn_conf.setMinimumHeight(45)
+                btn_conf.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #c0392b; }")
+                btn_conf.clicked.connect(lambda: self.conferma_ordine_final(numero_tavolo))
+                self.btn_layout_ordini.addWidget(btn_conf)
+            else:
+                btn_conf = QPushButton("✓ Conferma")
+                btn_conf.setMinimumHeight(45)
+                btn_conf.setStyleSheet("QPushButton { background-color: #27ae60; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #229954; }")
+                btn_conf.clicked.connect(lambda: self.conferma_ordine_final(numero_tavolo))
+                self.btn_layout_ordini.addWidget(btn_conf)
 
     # =========================================================================
     # TAB ORDINARE / ORDINATO
@@ -1198,70 +1196,97 @@ class InterfacciaMobile(QMainWindow):
         else:
             prodotti = self.gestione.get_categoria_prodotti(categoria)
 
-        # SCROLL
+        # SCROLL RESPONSIVO - le card si adattano alla larghezza disponibile
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background-color: white; }")
 
-        container = QWidget()
-        container.setStyleSheet("background-color: white;")
-        grid = QGridLayout(container)
-        grid.setSpacing(10)
-        grid.setContentsMargins(10, 10, 10, 10)
-        grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        CARD_MIN_W = 160  # larghezza minima card
+        CARD_H     = 100  # altezza card
+        SPACING    = 10
 
-        COLS = 3
-        for i, prodotto in enumerate(prodotti):
-            row = i // COLS
-            col = i % COLS
+        class GridResponsivo(QWidget):
+            def __init__(self_, prodotti_list, tavolo, parent_self):
+                super().__init__()
+                self_.prodotti_list = prodotti_list
+                self_.tavolo = tavolo
+                self_.parent_self = parent_self
+                self_.setStyleSheet("background-color: white;")
+                self_._ultimo_n_cols = -1
+                self_._costruisci(4)  # build iniziale
 
-            # Contenitore card cliccabile
-            card_widget = QWidget()
-            card_widget.setFixedSize(150, 90)
-            card_widget.setStyleSheet("""
-                QWidget {
-                    background-color: #5dade2;
-                    border-radius: 10px;
-                    border: 1px solid #2e86c1;
-                }
-                QWidget:hover {
-                    background-color: #3498db;
-                    border: 1px solid #1a6fa8;
-                }
-            """)
+            def _costruisci(self_, n_cols):
+                if self_._ultimo_n_cols == n_cols:
+                    return
+                self_._ultimo_n_cols = n_cols
 
-            card_layout = QVBoxLayout(card_widget)
-            card_layout.setContentsMargins(10, 10, 10, 10)
-            card_layout.setSpacing(4)
-            card_layout.setAlignment(Qt.AlignTop)
+                # Rimuovi layout precedente
+                old = self_.layout()
+                if old:
+                    while old.count():
+                        item = old.takeAt(0)
+                        if item.widget():
+                            item.widget().deleteLater()
+                    QWidget().setLayout(old)  # detach
 
-            lbl_nome = QLabel(prodotto.nome)
-            lbl_nome.setWordWrap(True)
-            lbl_nome.setStyleSheet("color: white; font-size: 12px; font-weight: bold; background: transparent; border: none;")
-            lbl_nome.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-            card_layout.addWidget(lbl_nome)
+                grid = QGridLayout(self_)
+                grid.setSpacing(SPACING)
+                grid.setContentsMargins(SPACING, SPACING, SPACING, SPACING)
+                grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
-            lbl_prezzo = QLabel(f"€ {prodotto.prezzo:.2f}")
-            lbl_prezzo.setStyleSheet("color: #d6eaf8; font-size: 13px; font-weight: bold; background: transparent; border: none;")
-            lbl_prezzo.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
-            card_layout.addStretch()
-            card_layout.addWidget(lbl_prezzo)
+                for col_idx in range(n_cols):
+                    grid.setColumnStretch(col_idx, 1)
 
-            # Click su tutta la card
-            card_widget.mousePressEvent = lambda e, p=prodotto: self.card_cliccata(numero_tavolo, p)
+                for i, prodotto in enumerate(self_.prodotti_list):
+                    row = i // n_cols
+                    col = i % n_cols
 
-            grid.addWidget(card_widget, row, col, Qt.AlignTop | Qt.AlignLeft)
+                    card = QWidget()
+                    card.setMinimumHeight(CARD_H)
+                    card.setMaximumHeight(CARD_H)
+                    card.setStyleSheet("""
+                        QWidget {
+                            background-color: #5dade2;
+                            border-radius: 10px;
+                            border: 1px solid #2e86c1;
+                        }
+                        QWidget:hover {
+                            background-color: #3498db;
+                            border: 1px solid #1a6fa8;
+                        }
+                    """)
 
-        # Riempi colonne vuote nell'ultima riga per allineamento sinistra
-        total = len(prodotti)
-        remainder = total % COLS
-        if remainder != 0:
-            for fill_col in range(remainder, COLS):
-                spacer = QWidget()
-                spacer.setFixedSize(150, 90)
-                spacer.setStyleSheet("background: transparent; border: none;")
-                grid.addWidget(spacer, total // COLS, fill_col)
+                    cl = QVBoxLayout(card)
+                    cl.setContentsMargins(10, 10, 10, 10)
+                    cl.setSpacing(4)
+                    cl.setAlignment(Qt.AlignTop)
 
+                    lbl_nome = QLabel(prodotto.nome)
+                    lbl_nome.setWordWrap(True)
+                    lbl_nome.setStyleSheet("color: white; font-size: 13px; font-weight: bold; background: transparent; border: none;")
+                    lbl_nome.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+                    cl.addWidget(lbl_nome)
+                    cl.addStretch()
+
+                    lbl_prezzo = QLabel(f"€ {prodotto.prezzo:.2f}")
+                    lbl_prezzo.setStyleSheet("color: #d6eaf8; font-size: 14px; font-weight: bold; background: transparent; border: none;")
+                    lbl_prezzo.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
+                    cl.addWidget(lbl_prezzo)
+
+                    card.mousePressEvent = lambda e, p=prodotto: self_.parent_self.card_cliccata(self_.tavolo, p)
+                    grid.addWidget(card, row, col)
+
+            def resizeEvent(self_, event):
+                super().resizeEvent(event)
+                w = event.size().width()
+                n_cols = max(1, w // (CARD_MIN_W + SPACING))
+                self_._costruisci(n_cols)
+                # Aggiorna altezza minima container
+                if self_.prodotti_list:
+                    n_rows = (len(self_.prodotti_list) + n_cols - 1) // n_cols
+                    self_.setMinimumHeight(n_rows * (CARD_H + SPACING) + SPACING * 2)
+
+        container = GridResponsivo(prodotti, numero_tavolo, self)
         scroll.setWidget(container)
         self.layout_prodotti.addWidget(scroll)
 
@@ -1269,9 +1294,9 @@ class InterfacciaMobile(QMainWindow):
         self.categoria_attuale = categoria
         for cat, btn in self.pulsanti_categorie.items():
             if cat == categoria:
-                btn.setStyleSheet("QPushButton { background-color: #e67e22; color: white; border: none; border-radius: 5px; padding: 5px; font-size: 9px; font-weight: bold; border-bottom: 3px solid #d35400; } QPushButton:hover { background-color: #d35400; }")
+                btn.setStyleSheet("QPushButton { background-color: #e67e22; color: white; border: none; border-radius: 8px; padding: 6px; font-size: 12px; font-weight: bold; border-bottom: 3px solid #d35400; } QPushButton:hover { background-color: #d35400; }")
             else:
-                btn.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border: none; border-radius: 5px; padding: 5px; font-size: 9px; font-weight: bold; } QPushButton:hover { background-color: #e67e22; }")
+                btn.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border: none; border-radius: 8px; padding: 6px; font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #e67e22; }")
         self.mostra_prodotti_card(categoria, numero_tavolo)
 
     def card_cliccata(self, numero_tavolo: int, prodotto: Prodotto):
@@ -1434,6 +1459,11 @@ class InterfacciaMobile(QMainWindow):
         if not ordine.righe_ordinare:
             QMessageBox.warning(self, "Errore", "Non ci sono prodotti da ordinare!")
             return
+
+        if numero_tavolo == 0:  # ASPORTO: vai diretto al pagamento senza confermare
+            self.paga_ordine(numero_tavolo)
+            return
+
         ordine.righe_ordinato.extend(ordine.righe_ordinare)
         ordine.righe_ordinare.clear()
         ordine.stato = StatoOrdine.IN_PREPARAZIONE
@@ -1462,13 +1492,14 @@ class InterfacciaMobile(QMainWindow):
 
     def paga_ordine(self, numero_tavolo: int):
         ordine = self.gestione.get_ordine_attivo(numero_tavolo)
+        is_asporto = (numero_tavolo == 0)
         widget = QWidget()
         self.setCentralWidget(widget)
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QLabel("💳 PAGAMENTO")
+        header = QLabel("🛵 PAGAMENTO ASPORTO" if is_asporto else "💳 PAGAMENTO")
         header.setStyleSheet("font-size: 32px; font-weight: bold; color: white; padding: 25px; background-color: #34495e;")
         header.setAlignment(Qt.AlignCenter)
         layout.addWidget(header)
@@ -1478,26 +1509,32 @@ class InterfacciaMobile(QMainWindow):
         cl.setContentsMargins(40, 40, 40, 40)
         cl.setSpacing(30)
 
-        info = QLabel(f"Tavolo: {numero_tavolo} | Persone: {ordine.numero_persone}")
+        info_testo = "🛵 ASPORTO" if is_asporto else f"Tavolo: {numero_tavolo} | Persone: {ordine.numero_persone}"
+        info = QLabel(info_testo)
         info.setStyleSheet("font-size: 18px; color: white; padding: 15px; background-color: #2c3e50; border-radius: 4px;")
         info.setAlignment(Qt.AlignCenter)
         cl.addWidget(info)
 
-        totale_val = ordine.get_totale()
+        # Per asporto il totale è nelle righe_ordinare (non ancora confermate)
+        if is_asporto:
+            totale_val = sum(r.prodotto.prezzo * r.quantita for r in ordine.righe_ordinare)
+        else:
+            totale_val = ordine.get_totale()
         totale_label = QLabel(f"TOTALE: €{totale_val:.2f}")
         totale_label.setStyleSheet("font-size: 48px; font-weight: bold; color: #27ae60; padding: 30px;")
         totale_label.setAlignment(Qt.AlignCenter)
         cl.addWidget(totale_label)
 
-        # Mostra prodotti annullati se ce ne sono
-        annullati = [r for r in ordine.righe_ordinato if r.motivo_rifiuto == "Annullato"]
-        if annullati:
-            testo_ann = "⚠️ Prodotti annullati (già detratti): " + ", ".join(
-                f"{r.prodotto.nome} (-€{r.prodotto.prezzo * r.quantita:.2f})" for r in annullati)
-            lbl_ann = QLabel(testo_ann)
-            lbl_ann.setStyleSheet("color: #e74c3c; font-size: 12px; padding: 8px; background-color: #fdecea; border-radius: 6px;")
-            lbl_ann.setWordWrap(True)
-            cl.addWidget(lbl_ann)
+        # Mostra prodotti annullati se ce ne sono (solo per tavoli normali)
+        if not is_asporto:
+            annullati = [r for r in ordine.righe_ordinato if r.motivo_rifiuto == "Annullato"]
+            if annullati:
+                testo_ann = "⚠️ Prodotti annullati (già detratti): " + ", ".join(
+                    f"{r.prodotto.nome} (-€{r.prodotto.prezzo * r.quantita:.2f})" for r in annullati)
+                lbl_ann = QLabel(testo_ann)
+                lbl_ann.setStyleSheet("color: #e74c3c; font-size: 12px; padding: 8px; background-color: #fdecea; border-radius: 6px;")
+                lbl_ann.setWordWrap(True)
+                cl.addWidget(lbl_ann)
 
         pag_layout = QHBoxLayout()
         pag_layout.setSpacing(20)
@@ -1523,7 +1560,10 @@ class InterfacciaMobile(QMainWindow):
         btn_back = QPushButton("← INDIETRO")
         btn_back.setMinimumHeight(60)
         btn_back.setStyleSheet("QPushButton { background-color: #95a5a6; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #7f8c8d; }")
-        btn_back.clicked.connect(lambda: self.mostra_schermata_ordine(numero_tavolo, tab_ordinato=True))
+        if is_asporto:
+            btn_back.clicked.connect(lambda: self.mostra_schermata_ordine(numero_tavolo, tab_ordinato=False))
+        else:
+            btn_back.clicked.connect(lambda: self.mostra_schermata_ordine(numero_tavolo, tab_ordinato=True))
         cl.addWidget(btn_back)
 
         centrale.setLayout(cl)
@@ -1531,12 +1571,21 @@ class InterfacciaMobile(QMainWindow):
 
     def completa_pagamento_fullscreen(self, numero_tavolo: int, metodo: str):
         ordine = self.gestione.get_ordine_attivo(numero_tavolo)
-        tutte_righe = ordine.righe_ordinare + ordine.righe_ordinato
+        is_asporto = (numero_tavolo == 0)
+
+        if is_asporto:
+            # Per asporto: i prodotti sono ancora in righe_ordinare — li registriamo ora
+            righe = ordine.righe_ordinare
+            totale = sum(r.prodotto.prezzo * r.quantita for r in righe)
+        else:
+            righe = ordine.righe_ordinare + ordine.righe_ordinato
+            totale = ordine.get_totale()
+
         db = DatabaseOrdini()
-        db.salva_pagamento_cronologia(numero_tavolo, ordine.numero_persone, metodo, ordine.get_totale(), tutte_righe)
+        db.salva_pagamento_cronologia(numero_tavolo, ordine.numero_persone, metodo, totale, righe)
         db.chiudi()
         QMessageBox.information(self, "Pagamento Completato",
-                                f"Pagamento ricevuto in {metodo}!\n\nTotale pagato: €{ordine.get_totale():.2f}")
+                                f"Pagamento ricevuto in {metodo}!\n\nTotale pagato: €{totale:.2f}")
         self.gestione.libera_tavolo(numero_tavolo)
         self.torna_a_tavoli()
 
