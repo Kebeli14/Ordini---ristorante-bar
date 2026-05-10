@@ -100,7 +100,7 @@ class Tavolo:
 
     def crea_nuovo_ordine(self, numero_persone: int = 1) -> Ordine:
         self.ordine_attivo = Ordine(self.numero_tavolo, numero_persone)
-        self.occupato = True
+        # NON setta occupato=True qui: diventa giallo solo dopo aver confermato
         return self.ordine_attivo
 
     def chiudi_ordine(self) -> Optional[Ordine]:
@@ -139,6 +139,30 @@ class DatabaseOrdini:
             numero_tavolo INTEGER, numero_persone INTEGER,
             metodo_pagamento TEXT, totale REAL,
             data_ora TIMESTAMP, dettaglio_prodotti TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS note_rapide_categoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            categoria TEXT NOT NULL,
+            nota TEXT NOT NULL)''')
+        self.connessione.commit()
+
+    def get_note_rapide(self, categoria: str):
+        cursor = self.connessione.cursor()
+        cursor.execute('SELECT id, nota FROM note_rapide_categoria WHERE categoria=? ORDER BY id', (categoria,))
+        return cursor.fetchall()
+
+    def aggiungi_nota_rapida(self, categoria: str, nota: str):
+        cursor = self.connessione.cursor()
+        cursor.execute('INSERT INTO note_rapide_categoria (categoria, nota) VALUES (?,?)', (categoria, nota))
+        self.connessione.commit()
+
+    def modifica_nota_rapida(self, id_nota: int, nuovo_testo: str):
+        cursor = self.connessione.cursor()
+        cursor.execute('UPDATE note_rapide_categoria SET nota=? WHERE id=?', (nuovo_testo, id_nota))
+        self.connessione.commit()
+
+    def elimina_nota_rapida(self, id_nota: int):
+        cursor = self.connessione.cursor()
+        cursor.execute('DELETE FROM note_rapide_categoria WHERE id=?', (id_nota,))
         self.connessione.commit()
 
     def _carica_menu(self):
@@ -664,6 +688,19 @@ class InterfacciaMobile(QMainWindow):
 
         self.btn_layout_ordini = QHBoxLayout()
         self.btn_layout_ordini.setSpacing(6)
+
+        # Tab "📝 Nota Cucina" viola — nascosto finché non si seleziona un prodotto
+        self.btn_nota_tab = QPushButton("📝 Nota Cucina")
+        self.btn_nota_tab.setMinimumHeight(38)
+        self.btn_nota_tab.setStyleSheet("""
+            QPushButton { background-color: #8e44ad; color: white; border: none;
+                border-radius: 6px; font-size: 12px; font-weight: bold; }
+            QPushButton:hover { background-color: #7d3c98; }
+        """)
+        self.btn_nota_tab.hide()
+        self.btn_nota_tab.clicked.connect(lambda: self.apri_overlay_nota(numero_tavolo))
+        sinistra_layout.addWidget(self.btn_nota_tab)
+
         self.aggiorna_bottoni_ordini(numero_tavolo, tab_ordinato)
         sinistra_layout.addLayout(self.btn_layout_ordini)
 
@@ -748,19 +785,10 @@ class InterfacciaMobile(QMainWindow):
         menu_widget.setLayout(menu_layout)
         destra_layout.addWidget(menu_widget, 1)
 
-        # sezione destra
+        # sezione destra — nascosta, non serve più
         self.sezione_destra_widget = QWidget()
-        self.sezione_destra_widget.setStyleSheet("background-color: #ecf0f1; border-left: 2px solid #bdc3c7;")
-        self.sezione_destra_widget.setMaximumWidth(250)
         self.sezione_destra_layout = QVBoxLayout(self.sezione_destra_widget)
-        self.sezione_destra_layout.setContentsMargins(15, 15, 15, 15)
-        self.sezione_destra_layout.setSpacing(10)
-        lbl_vuoto = QLabel("Seleziona un prodotto")
-        lbl_vuoto.setStyleSheet("color: #95a5a6; font-size: 12px; padding: 20px;")
-        lbl_vuoto.setAlignment(Qt.AlignCenter)
-        self.sezione_destra_layout.addWidget(lbl_vuoto)
-        self.sezione_destra_layout.addStretch()
-        destra_layout.addWidget(self.sezione_destra_widget)
+        self.sezione_destra_widget.hide()
 
         main_layout.addWidget(sinistra_widget, 1)
         main_layout.addWidget(destra_widget, 2)
@@ -915,6 +943,10 @@ class InterfacciaMobile(QMainWindow):
         self.aggiorna_bottoni_ordini(numero_tavolo, False)
 
     def mostra_tab_ordinare(self, numero_tavolo: int):
+        # Reset selezione ogni volta che si ricarica la lista
+        self.prodotto_selezionato_idx = None
+        if hasattr(self, 'btn_nota_tab'):
+            self.btn_nota_tab.hide()
         ordine = self.gestione.get_ordine_attivo(numero_tavolo)
         while self.layout_ordine.count():
             child = self.layout_ordine.takeAt(0)
@@ -937,7 +969,6 @@ class InterfacciaMobile(QMainWindow):
             nome_testo = f"⏸️ {riga.prodotto.nome}" if riga.in_attesa else riga.prodotto.nome
             nome = QLabel(nome_testo)
             nome.setStyleSheet("color: white; font-size: 12px; font-weight: bold;")
-            nome.mousePressEvent = lambda e, idx=i, p=riga.prodotto: self.seleziona_prodotto(numero_tavolo, idx, p)
             row_layout.addWidget(nome, 1)
 
             qtd = QLabel(f"x{riga.quantita}")
@@ -975,6 +1006,7 @@ class InterfacciaMobile(QMainWindow):
                 cl.addWidget(i_lbl)
 
             container.setLayout(cl)
+            container.mousePressEvent = lambda e, idx=i, p=riga.prodotto: self.seleziona_prodotto(numero_tavolo, idx, p)
             self.layout_ordine.addWidget(container)
             self.righe_ordinare_widget[i] = container
 
@@ -1072,19 +1104,51 @@ class InterfacciaMobile(QMainWindow):
     # SELEZIONE PRODOTTI
     # =========================================================================
 
+    # NOTE RAPIDE PER CATEGORIA
+    NOTE_RAPIDE_DEFAULT = {
+        "Bevande":     ["Con ghiaccio", "Senza ghiaccio", "Con limone", "Senza limone", "Ben fredda", "A temperatura ambiente"],
+        "Birre":       ["Con ghiaccio", "Senza ghiaccio", "Boccale freddo", "Media", "Piccola"],
+        "Caffetteria": ["Lungo", "Ristretto", "Macchiato caldo", "Macchiato freddo", "Senza zucchero", "Con zucchero", "Decaffeinato", "Caldo", "Tiepido"],
+        "Cocktails":   ["Con ghiaccio", "Senza ghiaccio", "Con limone", "Senza limone", "Poco alcolico", "Shakerato"],
+        "Dolci":       ["Senza panna", "Con panna", "Senza zucchero", "Tiepido", "Porzione grande"],
+        "Panini":      ["Senza pane", "Con pane", "Pane tostato", "Senza maionese", "Con maionese", "Ben cotto", "Al sangue", "Extra salsa"],
+        "Pizze":       ["Senza glutine", "Bordo ripieno", "Ben cotta", "Poco cotta", "Senza mozzarella", "Doppia mozzarella", "Senza pomodoro", "Piccante"],
+        "Primi piatti":["Senza sale", "Poco sale", "Al dente", "Ben cotta", "Senza aglio", "Con pane", "Senza pane", "Piccante", "Porzione abbondante"],
+    }
+
+    def _get_note_rapide_categoria(self, categoria: str):
+        try:
+            righe = self.gestione.db.get_note_rapide(categoria)
+            if righe:
+                return [r["nota"] for r in righe]
+        except Exception:
+            pass
+        return self.NOTE_RAPIDE_DEFAULT.get(categoria, [])
+
     def seleziona_prodotto(self, numero_tavolo: int, idx: int, prodotto: Prodotto):
         if self.prodotto_selezionato_idx == idx:
+            # Deseleziona
+            self._aggiorna_stile_riga_ordinare(idx, selezionato=False)
             self.prodotto_selezionato_idx = None
-            self.mostra_sezione_destra(None)
-            if idx in self.righe_ordinare_widget:
-                self.righe_ordinare_widget[idx].setStyleSheet("background-color: #34495e;")
+            if hasattr(self, 'btn_nota_tab'):
+                self.btn_nota_tab.hide()
         else:
-            if self.prodotto_selezionato_idx is not None and self.prodotto_selezionato_idx in self.righe_ordinare_widget:
-                self.righe_ordinare_widget[self.prodotto_selezionato_idx].setStyleSheet("background-color: #34495e;")
+            # Deseleziona il precedente
+            if self.prodotto_selezionato_idx is not None:
+                self._aggiorna_stile_riga_ordinare(self.prodotto_selezionato_idx, selezionato=False)
             self.prodotto_selezionato_idx = idx
-            if idx in self.righe_ordinare_widget:
-                self.righe_ordinare_widget[idx].setStyleSheet("background-color: #2980b9;")
-            self.mostra_sezione_destra(prodotto)
+            self._aggiorna_stile_riga_ordinare(idx, selezionato=True)
+            if hasattr(self, 'btn_nota_tab'):
+                self.btn_nota_tab.show()
+
+    def _aggiorna_stile_riga_ordinare(self, idx: int, selezionato: bool):
+        if idx not in self.righe_ordinare_widget:
+            return
+        container = self.righe_ordinare_widget[idx]
+        if selezionato:
+            container.setStyleSheet("background-color: #34495e; border: 2px solid #1abc9c; border-radius: 4px;")
+        else:
+            container.setStyleSheet("background-color: #34495e; border: none;")
 
     def seleziona_prodotto_ordinato(self, numero_tavolo: int, idx: int):
         if not hasattr(self, 'prodotto_selezionato_ordinato_idx'):
@@ -1323,11 +1387,6 @@ class InterfacciaMobile(QMainWindow):
             self.sezione_destra_layout.addStretch()
             return
 
-        btn_nota = QPushButton("📝 Nota Cucina")
-        btn_nota.setStyleSheet("QPushButton { background-color: #3498db; color: white; border: none; padding: 12px; font-size: 12px; font-weight: bold; border-radius: 6px; min-height: 45px; } QPushButton:hover { background-color: #2980b9; }")
-        btn_nota.clicked.connect(self.apri_popup_nota)
-        self.sezione_destra_layout.addWidget(btn_nota)
-
         if prodotto.categoria in ["Pizze", "Primi piatti", "Panini"]:
             btn_ing = QPushButton("🥘 Ingredienti")
             btn_ing.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border: none; padding: 12px; font-size: 12px; font-weight: bold; border-radius: 6px; min-height: 45px; } QPushButton:hover { background-color: #e67e22; }")
@@ -1336,35 +1395,117 @@ class InterfacciaMobile(QMainWindow):
 
         self.sezione_destra_layout.addStretch()
 
-    def apri_popup_nota(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Nota Cucina")
-        dialog.setGeometry(500, 400, 500, 300)
-        dialog.setModal(True)
-        dialog.setStyleSheet("background-color: #f5f5f5;")
-        layout = QVBoxLayout()
-        title = QLabel("📝 Nota Cucina")
-        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 10px;")
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
+    def apri_overlay_nota(self, numero_tavolo: int):
+        ordine = self.gestione.get_ordine_attivo(numero_tavolo)
+        if self.prodotto_selezionato_idx is None or ordine is None:
+            return
+        if self.prodotto_selezionato_idx >= len(ordine.righe_ordinare):
+            return
+        riga = ordine.righe_ordinare[self.prodotto_selezionato_idx]
+        prodotto = riga.prodotto
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Nota Cucina")
+        dlg.setModal(True)
+        dlg.resize(540, 460)
+        dlg.setStyleSheet("QDialog { background-color: #2c3e50; } QLabel { color: white; }")
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(12)
+
+        # Header
+        header = QLabel(f"📝  {prodotto.nome}")
+        header.setStyleSheet("font-size: 16px; font-weight: bold; color: white;"
+                             "background-color: #8e44ad; border-radius: 8px; padding: 10px 14px;")
+        lay.addWidget(header)
+
+        # Campo testo — dichiarato subito per le lambda
         text_nota = QTextEdit()
-        text_nota.setStyleSheet("QTextEdit { font-size: 13px; border: 2px solid #3498db; border-radius: 6px; padding: 10px; background-color: white; }")
-        text_nota.setPlaceholderText("Es: Senza sale, ben cotto, con salsa a parte...")
-        layout.addWidget(text_nota)
+        text_nota.setStyleSheet("QTextEdit { font-size: 13px; border: 2px solid #8e44ad;"
+                                "border-radius: 6px; padding: 8px; background-color: white; color: #2c3e50; }")
+        text_nota.setPlaceholderText("Scrivi una nota libera oppure usa i tasti rapidi...")
+        text_nota.setFixedHeight(80)
+        if riga.nota_cucina:
+            text_nota.setPlainText(riga.nota_cucina)
+
+        def aggiungi_rapida(testo):
+            attuale = text_nota.toPlainText().strip()
+            parti = [p.strip() for p in attuale.split(",") if p.strip()]
+            if testo not in parti:
+                parti.append(testo)
+            text_nota.setPlainText(", ".join(parti))
+
+        # Note rapide
+        note_rapide = self._get_note_rapide_categoria(prodotto.categoria)
+        if note_rapide:
+            lbl = QLabel("Tocca per aggiungere:")
+            lbl.setStyleSheet("font-size: 11px; color: #bdc3c7;")
+            lay.addWidget(lbl)
+
+            scroll_r = QScrollArea()
+            scroll_r.setWidgetResizable(True)
+            scroll_r.setMaximumHeight(115)
+            scroll_r.setStyleSheet("QScrollArea { border: 1px solid #8e44ad; border-radius: 6px; background: #34495e; }")
+            cont_r = QWidget()
+            cont_r.setStyleSheet("background: #34495e;")
+            grid_r = QGridLayout(cont_r)
+            grid_r.setSpacing(6)
+            grid_r.setContentsMargins(8, 8, 8, 8)
+            COLS = 3
+            for i, n in enumerate(note_rapide):
+                b = QPushButton(n)
+                b.setMinimumHeight(32)
+                b.setStyleSheet("QPushButton { background-color: #8e44ad; color: white; border: none;"
+                                "border-radius: 6px; font-size: 11px; font-weight: bold; padding: 4px 8px; }"
+                                "QPushButton:hover { background-color: #7d3c98; }"
+                                "QPushButton:pressed { background-color: #6c3483; }")
+                b.clicked.connect(lambda checked, t=n: aggiungi_rapida(t))
+                grid_r.addWidget(b, i // COLS, i % COLS)
+            scroll_r.setWidget(cont_r)
+            lay.addWidget(scroll_r)
+
+        lbl_libera = QLabel("Nota libera:")
+        lbl_libera.setStyleSheet("font-size: 11px; color: #bdc3c7;")
+        lay.addWidget(lbl_libera)
+        lay.addWidget(text_nota)
+
+        # Bottoni
         bl = QHBoxLayout()
-        btn_c = QPushButton("Chiudi")
-        btn_c.setMinimumHeight(40)
-        btn_c.setStyleSheet("background-color: #95a5a6; color: white; font-weight: bold;")
-        btn_c.clicked.connect(dialog.reject)
-        bl.addWidget(btn_c)
-        btn_s = QPushButton("✓ Salva")
-        btn_s.setMinimumHeight(40)
-        btn_s.setStyleSheet("background-color: #3498db; color: white; font-weight: bold;")
-        btn_s.clicked.connect(lambda: self.salva_nota(dialog, text_nota.toPlainText()))
-        bl.addWidget(btn_s)
-        layout.addLayout(bl)
-        dialog.setLayout(layout)
-        dialog.exec_()
+        bl.setSpacing(10)
+
+        btn_rm = QPushButton("🗑  Rimuovi nota")
+        btn_rm.setMinimumHeight(42)
+        btn_rm.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; border-radius: 6px;"
+                             "font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #c0392b; }")
+        btn_rm.clicked.connect(lambda: (setattr(riga, 'nota_cucina', ''),
+                                        self.mostra_tab_ordinare(numero_tavolo), dlg.accept()))
+        bl.addWidget(btn_rm)
+
+        btn_ch = QPushButton("✕  Chiudi")
+        btn_ch.setMinimumHeight(42)
+        btn_ch.setStyleSheet("QPushButton { background-color: #7f8c8d; color: white; border-radius: 6px;"
+                             "font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #636e72; }")
+        btn_ch.clicked.connect(dlg.reject)
+        bl.addWidget(btn_ch)
+
+        btn_sv = QPushButton("✓  Salva")
+        btn_sv.setMinimumHeight(42)
+        btn_sv.setStyleSheet("QPushButton { background-color: #8e44ad; color: white; border-radius: 6px;"
+                             "font-size: 13px; font-weight: bold; } QPushButton:hover { background-color: #7d3c98; }")
+        btn_sv.clicked.connect(lambda: (setattr(riga, 'nota_cucina', text_nota.toPlainText().strip()),
+                                        self.mostra_tab_ordinare(numero_tavolo), dlg.accept()))
+        bl.addWidget(btn_sv)
+
+        lay.addLayout(bl)
+        dlg.exec_()
+
+    def apri_popup_nota(self, prodotto: Prodotto = None):
+        # Reindirizza all'overlay
+        if hasattr(self, 'tavolo_attuale'):
+            self.apri_overlay_nota(self.tavolo_attuale)
+
+
 
     def apri_popup_ingredienti(self):
         dialog = QDialog(self)
@@ -1397,14 +1538,11 @@ class InterfacciaMobile(QMainWindow):
         dialog.exec_()
 
     def salva_nota(self, dialog, nota: str):
-        if nota.strip():
-            ordine = self.gestione.get_ordine_attivo(self.tavolo_attuale)
-            if self.prodotto_selezionato_idx is not None and self.prodotto_selezionato_idx < len(ordine.righe_ordinare):
-                ordine.righe_ordinare[self.prodotto_selezionato_idx].nota_cucina = nota
-                self.mostra_tab_ordinare(self.tavolo_attuale)
-            dialog.accept()
-        else:
-            QMessageBox.warning(self, "Errore", "Scrivi una nota!")
+        ordine = self.gestione.get_ordine_attivo(self.tavolo_attuale)
+        if self.prodotto_selezionato_idx is not None and self.prodotto_selezionato_idx < len(ordine.righe_ordinare):
+            ordine.righe_ordinare[self.prodotto_selezionato_idx].nota_cucina = nota.strip()
+            self.mostra_tab_ordinare(self.tavolo_attuale)
+        dialog.accept()
 
     def salva_ingredienti(self, dialog, ingredienti: str):
         if ingredienti.strip():
@@ -1464,6 +1602,11 @@ class InterfacciaMobile(QMainWindow):
             self.paga_ordine(numero_tavolo)
             return
 
+        # Solo ora il tavolo diventa "occupato" (giallo)
+        tavolo = self.gestione.get_tavolo(numero_tavolo)
+        if tavolo:
+            tavolo.occupato = True
+
         ordine.righe_ordinato.extend(ordine.righe_ordinare)
         ordine.righe_ordinare.clear()
         ordine.stato = StatoOrdine.IN_PREPARAZIONE
@@ -1493,81 +1636,212 @@ class InterfacciaMobile(QMainWindow):
     def paga_ordine(self, numero_tavolo: int):
         ordine = self.gestione.get_ordine_attivo(numero_tavolo)
         is_asporto = (numero_tavolo == 0)
-        widget = QWidget()
-        self.setCentralWidget(widget)
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
 
-        header = QLabel("🛵 PAGAMENTO ASPORTO" if is_asporto else "💳 PAGAMENTO")
-        header.setStyleSheet("font-size: 32px; font-weight: bold; color: white; padding: 25px; background-color: #34495e;")
-        header.setAlignment(Qt.AlignCenter)
-        layout.addWidget(header)
-
-        centrale = QWidget()
-        cl = QVBoxLayout(centrale)
-        cl.setContentsMargins(40, 40, 40, 40)
-        cl.setSpacing(30)
-
-        info_testo = "🛵 ASPORTO" if is_asporto else f"Tavolo: {numero_tavolo} | Persone: {ordine.numero_persone}"
-        info = QLabel(info_testo)
-        info.setStyleSheet("font-size: 18px; color: white; padding: 15px; background-color: #2c3e50; border-radius: 4px;")
-        info.setAlignment(Qt.AlignCenter)
-        cl.addWidget(info)
-
-        # Per asporto il totale è nelle righe_ordinare (non ancora confermate)
         if is_asporto:
             totale_val = sum(r.prodotto.prezzo * r.quantita for r in ordine.righe_ordinare)
         else:
             totale_val = ordine.get_totale()
-        totale_label = QLabel(f"TOTALE: €{totale_val:.2f}")
-        totale_label.setStyleSheet("font-size: 48px; font-weight: bold; color: #27ae60; padding: 30px;")
-        totale_label.setAlignment(Qt.AlignCenter)
-        cl.addWidget(totale_label)
 
-        # Mostra prodotti annullati se ce ne sono (solo per tavoli normali)
-        if not is_asporto:
-            annullati = [r for r in ordine.righe_ordinato if r.motivo_rifiuto == "Annullato"]
-            if annullati:
-                testo_ann = "⚠️ Prodotti annullati (già detratti): " + ", ".join(
-                    f"{r.prodotto.nome} (-€{r.prodotto.prezzo * r.quantita:.2f})" for r in annullati)
-                lbl_ann = QLabel(testo_ann)
-                lbl_ann.setStyleSheet("color: #e74c3c; font-size: 12px; padding: 8px; background-color: #fdecea; border-radius: 6px;")
-                lbl_ann.setWordWrap(True)
-                cl.addWidget(lbl_ann)
+        widget = QWidget()
+        widget.setStyleSheet("background-color: #2c3e50;")
+        self.setCentralWidget(widget)
+        root = QVBoxLayout(widget)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        pag_layout = QHBoxLayout()
-        pag_layout.setSpacing(20)
-
-        for testo, colore, metodo in [
-            ("💵 CONTANTI", "#27ae60", "Contanti"),
-            ("💳 CARTA",    "#3498db", "Carta"),
-            ("🖨️ STAMPA",   "#f39c12", "Stampa"),
-        ]:
-            btn = QPushButton(testo)
-            btn.setMinimumHeight(120)
-            btn.setMinimumWidth(250)
-            btn.setStyleSheet(f"QPushButton {{ background-color: {colore}; color: white; border: none; border-radius: 12px; font-size: 20px; font-weight: bold; }} QPushButton:hover {{ background-color: {colore}cc; }}")
-            if metodo == "Stampa":
-                btn.clicked.connect(lambda: self.stampa_scontrino(numero_tavolo))
-            else:
-                btn.clicked.connect(lambda checked, m=metodo: self.completa_pagamento_fullscreen(numero_tavolo, m))
-            pag_layout.addWidget(btn)
-
-        cl.addLayout(pag_layout)
-        cl.addStretch()
-
-        btn_back = QPushButton("← INDIETRO")
-        btn_back.setMinimumHeight(60)
-        btn_back.setStyleSheet("QPushButton { background-color: #95a5a6; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #7f8c8d; }")
+        # HEADER
+        header = QWidget()
+        header.setStyleSheet("background-color: #1a252f;")
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(20, 12, 20, 12)
+        btn_back = QPushButton("←")
+        btn_back.setFixedSize(44, 44)
+        btn_back.setStyleSheet("QPushButton { background-color: #34495e; color: white; border-radius: 22px; font-size: 18px; font-weight: bold; } QPushButton:hover { background-color: #4a6278; }")
         if is_asporto:
             btn_back.clicked.connect(lambda: self.mostra_schermata_ordine(numero_tavolo, tab_ordinato=False))
         else:
             btn_back.clicked.connect(lambda: self.mostra_schermata_ordine(numero_tavolo, tab_ordinato=True))
-        cl.addWidget(btn_back)
+        hl.addWidget(btn_back)
+        titolo = QLabel("🛵 ASPORTO" if is_asporto else f"💳 Tavolo {numero_tavolo}")
+        titolo.setStyleSheet("font-size: 22px; font-weight: bold; color: white;")
+        titolo.setAlignment(Qt.AlignCenter)
+        hl.addWidget(titolo, 1)
+        root.addWidget(header)
 
-        centrale.setLayout(cl)
-        layout.addWidget(centrale)
+        # CORPO
+        body = QWidget()
+        body_lay = QHBoxLayout(body)
+        body_lay.setContentsMargins(20, 20, 20, 20)
+        body_lay.setSpacing(20)
+        root.addWidget(body, 1)
+
+        # COLONNA SINISTRA: calcolatrice
+        left = QWidget()
+        left_lay = QVBoxLayout(left)
+        left_lay.setSpacing(10)
+        body_lay.addWidget(left, 3)
+
+        lbl_totale_title = QLabel("DA PAGARE")
+        lbl_totale_title.setStyleSheet("color: #95a5a6; font-size: 13px; font-weight: bold; letter-spacing: 2px;")
+        lbl_totale_title.setAlignment(Qt.AlignCenter)
+        left_lay.addWidget(lbl_totale_title)
+
+        lbl_totale = QLabel(f"€ {totale_val:.2f}")
+        lbl_totale.setStyleSheet("color: #2ecc71; font-size: 52px; font-weight: bold;")
+        lbl_totale.setAlignment(Qt.AlignCenter)
+        left_lay.addWidget(lbl_totale)
+
+        lbl_dato_title = QLabel("IMPORTO RICEVUTO")
+        lbl_dato_title.setStyleSheet("color: #95a5a6; font-size: 12px; font-weight: bold; letter-spacing: 2px;")
+        lbl_dato_title.setAlignment(Qt.AlignCenter)
+        left_lay.addWidget(lbl_dato_title)
+
+        self._calc_input = ""
+        lbl_input = QLabel("€ 0.00")
+        lbl_input.setStyleSheet("color: white; font-size: 38px; font-weight: bold; background-color: #1a252f; border-radius: 8px; padding: 10px 20px;")
+        lbl_input.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        lbl_input.setMinimumHeight(70)
+        left_lay.addWidget(lbl_input)
+
+        lbl_resto_title = QLabel("RESTO")
+        lbl_resto_title.setStyleSheet("color: #95a5a6; font-size: 12px; font-weight: bold; letter-spacing: 2px;")
+        lbl_resto_title.setAlignment(Qt.AlignCenter)
+        left_lay.addWidget(lbl_resto_title)
+
+        lbl_resto = QLabel("€ 0.00")
+        lbl_resto.setStyleSheet("color: #f39c12; font-size: 38px; font-weight: bold;")
+        lbl_resto.setAlignment(Qt.AlignCenter)
+        left_lay.addWidget(lbl_resto)
+
+        def aggiorna_display():
+            val = float(self._calc_input) / 100 if self._calc_input else 0.0
+            lbl_input.setText(f"€ {val:.2f}")
+            resto = val - totale_val
+            if resto >= 0:
+                lbl_resto.setText(f"€ {resto:.2f}")
+                lbl_resto.setStyleSheet("color: #f39c12; font-size: 38px; font-weight: bold;")
+            else:
+                lbl_resto.setText(f"- € {abs(resto):.2f}")
+                lbl_resto.setStyleSheet("color: #e74c3c; font-size: 38px; font-weight: bold;")
+
+        calc_widget = QWidget()
+        calc_grid = QGridLayout(calc_widget)
+        calc_grid.setSpacing(8)
+        calc_grid.setContentsMargins(0, 0, 0, 0)
+        tasti = [
+            ("7",0,0),("8",0,1),("9",0,2),
+            ("4",1,0),("5",1,1),("6",1,2),
+            ("1",2,0),("2",2,1),("3",2,2),
+            ("⌫",3,0),("0",3,1),("00",3,2),
+        ]
+        def premi(t):
+            if t == "⌫":
+                self._calc_input = self._calc_input[:-1]
+            elif len(self._calc_input) < 8:
+                self._calc_input += t
+            aggiorna_display()
+        for label, r, c in tasti:
+            b = QPushButton(label)
+            b.setMinimumHeight(58)
+            col = "#e74c3c" if label == "⌫" else "#34495e"
+            hov = "#c0392b" if label == "⌫" else "#4a6278"
+            b.setStyleSheet(f"QPushButton {{ background-color: {col}; color: white; border-radius: 8px; font-size: 22px; font-weight: bold; }} QPushButton:hover {{ background-color: {hov}; }}")
+            b.clicked.connect(lambda checked, t=label: premi(t))
+            calc_grid.addWidget(b, r, c)
+        left_lay.addWidget(calc_widget)
+
+        rapidi_lay = QHBoxLayout()
+        rapidi_lay.setSpacing(6)
+        for importo in [5, 10, 20, 50]:
+            br = QPushButton(f"€{importo}")
+            br.setMinimumHeight(40)
+            br.setStyleSheet("QPushButton { background-color: #8e44ad; color: white; border-radius: 6px; font-size: 13px; font-weight: bold; } QPushButton:hover { background-color: #7d3c98; }")
+            br.clicked.connect(lambda checked, v=importo: (setattr(self, "_calc_input", str(v * 100)), aggiorna_display()))
+            rapidi_lay.addWidget(br)
+        left_lay.addLayout(rapidi_lay)
+
+        # COLONNA DESTRA
+        right = QWidget()
+        right_lay = QVBoxLayout(right)
+        right_lay.setSpacing(12)
+        right_lay.setAlignment(Qt.AlignTop)
+        body_lay.addWidget(right, 2)
+
+        metodo_selezionato = {"valore": None}
+
+        ST_CONT_OFF = "QPushButton { background-color: #27ae60; color: white; border-radius: 10px; font-size: 18px; font-weight: bold; border: 3px solid transparent; } QPushButton:hover { background-color: #229954; }"
+        ST_CONT_ON  = "QPushButton { background-color: #27ae60; color: white; border-radius: 10px; font-size: 18px; font-weight: bold; border: 3px solid white; text-decoration: underline; }"
+        ST_CART_OFF = "QPushButton { background-color: #2980b9; color: white; border-radius: 10px; font-size: 18px; font-weight: bold; border: 3px solid transparent; } QPushButton:hover { background-color: #2471a3; }"
+        ST_CART_ON  = "QPushButton { background-color: #2980b9; color: white; border-radius: 10px; font-size: 18px; font-weight: bold; border: 3px solid white; text-decoration: underline; }"
+
+        lbl_metodo_title = QLabel("METODO DI PAGAMENTO")
+        lbl_metodo_title.setStyleSheet("color: #95a5a6; font-size: 12px; font-weight: bold; letter-spacing: 2px;")
+        lbl_metodo_title.setAlignment(Qt.AlignCenter)
+        right_lay.addWidget(lbl_metodo_title)
+
+        btn_contanti = QPushButton("💵  CONTANTI")
+        btn_contanti.setMinimumHeight(80)
+        btn_contanti.setStyleSheet(ST_CONT_OFF)
+        right_lay.addWidget(btn_contanti)
+
+        btn_carta = QPushButton("💳  CARTA")
+        btn_carta.setMinimumHeight(80)
+        btn_carta.setStyleSheet(ST_CART_OFF)
+        right_lay.addWidget(btn_carta)
+
+        def seleziona_metodo(metodo):
+            metodo_selezionato["valore"] = metodo
+            if metodo == "Contanti":
+                btn_contanti.setStyleSheet(ST_CONT_ON)
+                btn_carta.setStyleSheet(ST_CART_OFF)
+            else:
+                btn_carta.setStyleSheet(ST_CART_ON)
+                btn_contanti.setStyleSheet(ST_CONT_OFF)
+
+        btn_contanti.clicked.connect(lambda: seleziona_metodo("Contanti"))
+        btn_carta.clicked.connect(lambda: seleziona_metodo("Carta"))
+
+        btn_preconto = QPushButton("🖨️  PRECONTO")
+        btn_preconto.setMinimumHeight(60)
+        btn_preconto.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border-radius: 10px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #d68910; }")
+        btn_preconto.clicked.connect(lambda: self.stampa_scontrino(numero_tavolo))
+        right_lay.addWidget(btn_preconto)
+
+        right_lay.addStretch()
+
+        btn_chiudi = QPushButton("✓  CHIUDI CONTO")
+        btn_chiudi.setMinimumHeight(70)
+        btn_chiudi.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; border-radius: 10px; font-size: 18px; font-weight: bold; } QPushButton:hover { background-color: #c0392b; }")
+        def chiudi_conto():
+            m = metodo_selezionato["valore"]
+            if not m:
+                QMessageBox.warning(widget, "Seleziona metodo", "Seleziona prima CONTANTI o CARTA.")
+                return
+            self.completa_pagamento_fullscreen(numero_tavolo, m)
+        btn_chiudi.clicked.connect(chiudi_conto)
+        right_lay.addWidget(btn_chiudi)
+
+        lbl_prod = QLabel("RIEPILOGO")
+        lbl_prod.setStyleSheet("color: #95a5a6; font-size: 12px; font-weight: bold; letter-spacing: 2px; margin-top: 10px;")
+        lbl_prod.setAlignment(Qt.AlignCenter)
+        right_lay.addWidget(lbl_prod)
+
+        scroll_prod = QScrollArea()
+        scroll_prod.setWidgetResizable(True)
+        scroll_prod.setStyleSheet("QScrollArea { border: none; background-color: #1a252f; border-radius: 8px; }")
+        cont_prod = QWidget()
+        cont_prod.setStyleSheet("background-color: #1a252f;")
+        prod_lay = QVBoxLayout(cont_prod)
+        prod_lay.setContentsMargins(10, 10, 10, 10)
+        prod_lay.setSpacing(4)
+        righe_riepilogo = ordine.righe_ordinare if is_asporto else ordine.righe_ordinato
+        for r in righe_riepilogo:
+            riga_lbl = QLabel(f"{r.quantita}x {r.prodotto.nome}  €{r.prodotto.prezzo * r.quantita:.2f}")
+            riga_lbl.setStyleSheet("color: #bdc3c7; font-size: 11px; padding: 2px 0;")
+            prod_lay.addWidget(riga_lbl)
+        prod_lay.addStretch()
+        scroll_prod.setWidget(cont_prod)
+        right_lay.addWidget(scroll_prod, 1)
 
     def completa_pagamento_fullscreen(self, numero_tavolo: int, metodo: str):
         ordine = self.gestione.get_ordine_attivo(numero_tavolo)
@@ -1658,6 +1932,7 @@ class InterfacciaMobile(QMainWindow):
         tabs.setStyleSheet("QTabWidget::pane { border: 1px solid #bdc3c7; } QTabBar::tab { background-color: #ecf0f1; padding: 8px 20px; } QTabBar::tab:selected { background-color: #3498db; color: white; }")
         tabs.addTab(self.crea_tab_prodotti(), "📦 Prodotti")
         tabs.addTab(self.crea_tab_categorie(), "📂 Categorie")
+        tabs.addTab(self.crea_tab_note_cucina(), "📝 Note Cucina")
         tabs.addTab(self.crea_tab_csv(), "📄 CSV")
         tabs.addTab(self.crea_tab_tavoli(), "🍽️ Tavoli")
         tabs.addTab(self.crea_tab_cronologia(), "📋 Cronologia")
@@ -1710,6 +1985,129 @@ class InterfacciaMobile(QMainWindow):
         bl.addWidget(btn_e)
         layout.addLayout(bl)
         return widget
+
+    def crea_tab_note_cucina(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        lbl = QLabel("📝 Note Cucina per Categoria")
+        lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #8e44ad;")
+        layout.addWidget(lbl)
+
+        sub = QLabel("Seleziona una categoria per vedere e modificare le note rapide.")
+        sub.setStyleSheet("font-size: 11px; color: #7f8c8d;")
+        layout.addWidget(sub)
+
+        # Selettore categoria
+        hl = QHBoxLayout()
+        lbl_cat = QLabel("Categoria:")
+        lbl_cat.setStyleSheet("font-size: 13px; font-weight: bold;")
+        hl.addWidget(lbl_cat)
+        self.combo_nota_cat = QComboBox()
+        self.combo_nota_cat.setMinimumHeight(36)
+        self.combo_nota_cat.setStyleSheet("font-size: 13px; padding: 4px;")
+        for cat in self.gestione.get_categorie():
+            self.combo_nota_cat.addItem(cat)
+        hl.addWidget(self.combo_nota_cat, 1)
+        self.combo_nota_cat.currentIndexChanged.connect(self._aggiorna_lista_note_admin)
+        btn_carica = QPushButton("📂 Carica")
+        btn_carica.setMinimumHeight(36)
+        btn_carica.setStyleSheet("QPushButton { background-color: #8e44ad; color: white; font-weight: bold; border-radius: 6px; padding: 6px 14px; } QPushButton:hover { background-color: #7d3c98; }")
+        btn_carica.clicked.connect(self._aggiorna_lista_note_admin)
+        hl.addWidget(btn_carica)
+        layout.addLayout(hl)
+
+        # Lista note esistenti
+        self.lista_note_admin = QListWidget()
+        self.lista_note_admin.setStyleSheet("font-size: 13px; border: 1px solid #d2b4de; border-radius: 6px;")
+        self.lista_note_admin.setMinimumHeight(200)
+        layout.addWidget(self.lista_note_admin)
+
+        # Aggiunge nuova nota
+        hl2 = QHBoxLayout()
+        self.input_nuova_nota = QLineEdit()
+        self.input_nuova_nota.setMinimumHeight(36)
+        self.input_nuova_nota.setPlaceholderText("Es: Con ghiaccio, Senza sale, Ben cotto...")
+        self.input_nuova_nota.setStyleSheet("font-size: 13px; border: 2px solid #8e44ad; border-radius: 6px; padding: 6px;")
+        hl2.addWidget(self.input_nuova_nota, 1)
+        btn_add = QPushButton("➕ Aggiungi")
+        btn_add.setMinimumHeight(36)
+        btn_add.setStyleSheet("QPushButton { background-color: #27ae60; color: white; font-weight: bold; border-radius: 6px; padding: 6px 14px; } QPushButton:hover { background-color: #229954; }")
+        btn_add.clicked.connect(self._aggiungi_nota_admin)
+        hl2.addWidget(btn_add)
+        layout.addLayout(hl2)
+
+        # Modifica / Elimina
+        hl3 = QHBoxLayout()
+        btn_mod = QPushButton("✏️ Modifica Selezionata")
+        btn_mod.setMinimumHeight(36)
+        btn_mod.setStyleSheet("QPushButton { background-color: #f39c12; color: white; font-weight: bold; border-radius: 6px; padding: 6px 14px; } QPushButton:hover { background-color: #e67e22; }")
+        btn_mod.clicked.connect(self._modifica_nota_admin)
+        hl3.addWidget(btn_mod)
+        btn_del = QPushButton("🗑️ Elimina Selezionata")
+        btn_del.setMinimumHeight(36)
+        btn_del.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; font-weight: bold; border-radius: 6px; padding: 6px 14px; } QPushButton:hover { background-color: #c0392b; }")
+        btn_del.clicked.connect(self._elimina_nota_admin)
+        hl3.addWidget(btn_del)
+        layout.addLayout(hl3)
+
+        # Carica categoria di default
+        self._aggiorna_lista_note_admin()
+        return widget
+
+    def _aggiorna_lista_note_admin(self):
+        if not hasattr(self, 'lista_note_admin'):
+            return
+        self.lista_note_admin.clear()
+        categoria = self.combo_nota_cat.currentText()
+        righe = self.gestione.db.get_note_rapide(categoria)
+
+        # Se non ci sono note nel DB per questa categoria, importa i default automaticamente
+        if not righe:
+            default = self.NOTE_RAPIDE_DEFAULT.get(categoria, [])
+            for n in default:
+                self.gestione.db.aggiungi_nota_rapida(categoria, n)
+            righe = self.gestione.db.get_note_rapide(categoria)
+
+        for r in righe:
+            item = QListWidgetItem(r["nota"])
+            item.setData(Qt.UserRole, r["id"])
+            self.lista_note_admin.addItem(item)
+
+    def _aggiungi_nota_admin(self):
+        testo = self.input_nuova_nota.text().strip()
+        if not testo:
+            QMessageBox.warning(self, "Errore", "Scrivi il testo della nota!")
+            return
+        categoria = self.combo_nota_cat.currentText()
+        self.gestione.db.aggiungi_nota_rapida(categoria, testo)
+        self.input_nuova_nota.clear()
+        self._aggiorna_lista_note_admin()
+
+    def _modifica_nota_admin(self):
+        item = self.lista_note_admin.currentItem()
+        if not item or item.data(Qt.UserRole) is None:
+            QMessageBox.warning(self, "Errore", "Seleziona una nota salvata (non default)!")
+            return
+        id_nota = item.data(Qt.UserRole)
+        nuovo, ok = QInputDialog.getText(self, "Modifica Nota", "Nuovo testo:", text=item.text())
+        if ok and nuovo.strip():
+            self.gestione.db.modifica_nota_rapida(id_nota, nuovo.strip())
+            self._aggiorna_lista_note_admin()
+
+    def _elimina_nota_admin(self):
+        item = self.lista_note_admin.currentItem()
+        if not item or item.data(Qt.UserRole) is None:
+            QMessageBox.warning(self, "Errore", "Seleziona una nota salvata (non default)!")
+            return
+        id_nota = item.data(Qt.UserRole)
+        reply = QMessageBox.question(self, "Elimina", f"Eliminare la nota:\n\"{item.text()}\"?",
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.gestione.db.elimina_nota_rapida(id_nota)
+            self._aggiorna_lista_note_admin()
 
     def crea_tab_csv(self):
         widget = QWidget()
@@ -2185,8 +2583,10 @@ class InterfacciaMobile(QMainWindow):
 
     def torna_a_tavoli(self):
         if self.tavolo_attuale > 0:
+            tavolo = self.gestione.get_tavolo(self.tavolo_attuale)
             ordine = self.gestione.get_ordine_attivo(self.tavolo_attuale)
-            if ordine and ordine.is_vuoto():
+            # Libera il tavolo se non è stato confermato (non occupato) o se è vuoto
+            if ordine and (ordine.is_vuoto() or not tavolo.occupato):
                 self.gestione.libera_tavolo(self.tavolo_attuale)
         self.crea_schermata_principale()
 
